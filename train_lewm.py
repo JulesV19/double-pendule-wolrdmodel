@@ -35,9 +35,9 @@ def get_device():
 @torch.no_grad()
 def evaluate(model: LeWorldModel, loader, device) -> dict:
     model.eval()
-    sums = {"loss": 0.0, "pred_loss": 0.0, "sigreg": 0.0}
-    for frames, _ in loader:
-        m = model(frames.to(device, non_blocking=True))
+    sums = {"loss": 0.0, "pred_loss": 0.0, "sigreg": 0.0, "omega_loss": 0.0}
+    for frames, states in loader:
+        m = model(frames.to(device, non_blocking=True), states.to(device, non_blocking=True))
         for k in sums:
             sums[k] += m[k].item()
     n = len(loader)
@@ -104,12 +104,13 @@ def train(args):
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         t0   = time.time()
-        sums = {"loss": 0.0, "pred_loss": 0.0, "sigreg": 0.0}
+        sums = {"loss": 0.0, "pred_loss": 0.0, "sigreg": 0.0, "omega_loss": 0.0}
 
-        for frames, _ in train_loader:
+        for frames, states in train_loader:
             frames = frames.to(device, non_blocking=True)
+            states = states.to(device, non_blocking=True)
             optimizer.zero_grad()
-            m = model(frames)
+            m = model(frames, states)
             m["loss"].backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -145,6 +146,7 @@ def train(args):
             f"  loss={train_loss:.4f}"
             f"  pred={sums['pred_loss']/n:.4f}"
             f"  sig={sums['sigreg']/n:.4f}"
+            f"  ω={sums['omega_loss']/n:.4f}"
             f"  val={val_m['loss']:.4f}"
             f"  lr={lr_now:.2e}"
             f"  {elapsed:.1f}s"

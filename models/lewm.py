@@ -119,6 +119,7 @@ class LeWorldModel(nn.Module):
         self.predictor      = CausalPredictor(embed_dim, hidden_dim,
                                               n_heads, n_layers, max_frames)
         self.mask_token     = nn.Parameter(torch.zeros(embed_dim))
+        self.omega_head     = nn.Linear(embed_dim, 2)   # prédit (ω1, ω2)
 
     # ── Frame stacking ───────────────────────────────────────────────────────
 
@@ -131,13 +132,14 @@ class LeWorldModel(nn.Module):
 
     # ── Forward (entraînement) ───────────────────────────────────────────────
 
-    def forward(self, frames: torch.Tensor) -> dict:
+    def forward(self, frames: torch.Tensor, states: torch.Tensor | None = None) -> dict:
         """
         Args:
             frames : (B, T, 3, H, W)  séquences normalisées [0, 1]
+            states : (B, T, 4)  [θ1, θ2, ω1, ω2] — optionnel, active la loss auxiliaire ω
 
         Returns:
-            dict : loss, pred_loss, sigreg (tous scalaires)
+            dict : loss, pred_loss, sigreg, omega_loss (tous scalaires)
         """
         B, T, C, H, W = frames.shape
         pairs = self._make_pairs(frames)               # (B, T, 6, H, W)
@@ -173,12 +175,21 @@ class LeWorldModel(nn.Module):
         z_flat = z_ctx.reshape(B * T, self.embed_dim)
         sigreg = sigreg_loss(z_flat, self.n_proj)
 
-        loss = pred_loss + self.lam * sigreg
+        # Loss auxiliaire ω — force l'encodeur à encoder la vitesse dans z
+        if states is not None:
+            omega_true = states[:, :, 2:].to(z_ctx.device)   # (B, T, 2)
+            omega_pred = self.omega_head(z_ctx)               # (B, T, 2)
+            omega_loss = F.mse_loss(omega_pred, omega_true)
+        else:
+            omega_loss = torch.zeros(1, device=z_ctx.device).squeeze()
+
+        loss = pred_loss + self.lam * sigreg + 0.1 * omega_loss
 
         return {
-            "loss":      loss,
-            "pred_loss": pred_loss.detach(),
-            "sigreg":    sigreg.detach(),
+            "loss":       loss,
+            "pred_loss":  pred_loss.detach(),
+            "sigreg":     sigreg.detach(),
+            "omega_loss": omega_loss.detach(),
         }
 
     def update_target(self) -> None:

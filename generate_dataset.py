@@ -78,8 +78,8 @@ def render_frame(state, img_size=64, L1=1.0, L2=1.0):
     x2 = x1 + scale * L2 * np.sin(theta2)
     y2 = y1 + scale * L2 * np.cos(theta2)
 
-    draw.line([(cx, cy), (x1, y1)], fill=(255, 255, 255), width=1)
-    draw.line([(x1, y1), (x2, y2)], fill=(255, 255, 255), width=1)
+    draw.line([(cx, cy), (x1, y1)], fill=(255, 255, 255), width=2)
+    draw.line([(x1, y1), (x2, y2)], fill=(255, 255, 255), width=2)
 
     r = max(2, img_size // 22)
     draw.ellipse([(cx - 2, cy - 2), (cx + 2, cy + 2)], fill=(160, 160, 160))
