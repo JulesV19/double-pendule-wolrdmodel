@@ -75,11 +75,12 @@ class LeWorldModel(nn.Module):
       • Anti-collapse garanti mathématiquement par le théorème de Cramér-Wold.
 
     Forward :
-      1. Encoder online  : frames → z_ctx        (B, T, D)   [gradient actif]
-      2. Encoder target  : frames → z_tgt        (B, T, D)   [EMA, no gradient]
-      3. Predictor causal: z_ctx_{0..T-2} → ẑ   (B, T-1, D)
-      4. Pred loss       : MSE(ẑ_t, z_tgt_t)     scalaire
-      5. SIGReg          : force z_ctx ~ N(0, I)  scalaire
+      1. Encoder online  : frames → z_ctx              (B, T, D)   [gradient actif]
+      2. Encoder target  : frames → z_tgt              (B, T, D)   [EMA, no gradient]
+      3. Masquage        : mask_ratio des z_ctx remplacés par mask_token
+      4. Predictor causal: z_ctx_masqué_{0..T-2} → ẑ  (B, T-1, D)
+      5. Pred loss       : MSE(ẑ, z_tgt) sur positions masquées uniquement
+      6. SIGReg          : force z_ctx ~ N(0, I)        scalaire
 
     Appeler model.update_target() après chaque optimizer.step().
 
@@ -104,16 +105,20 @@ class LeWorldModel(nn.Module):
         lam:          float = 0.1,
         n_proj:       int   = 512,
         ema_momentum: float = 0.996,
+        mask_ratio:   float = 0.4,
     ):
         super().__init__()
         self.embed_dim = embed_dim
         self.lam       = lam
         self.n_proj    = n_proj
 
+        self.mask_ratio = mask_ratio
+
         self.encoder        = ContextEncoder(embed_dim)
         self.target_encoder = TargetEncoder(self.encoder, momentum=ema_momentum)
         self.predictor      = CausalPredictor(embed_dim, hidden_dim,
                                               n_heads, n_layers, max_frames)
+        self.mask_token     = nn.Parameter(torch.zeros(embed_dim))
 
     # ── Forward (entraînement) ───────────────────────────────────────────────
 
@@ -128,17 +133,31 @@ class LeWorldModel(nn.Module):
         B, T, C, H, W = frames.shape
         frames_flat = frames.reshape(B * T, C, H, W)
 
-        # Encodeur online (gradient actif) — contexte pour le predictor
-        z_ctx = self.encoder(frames_flat).view(B, T, self.embed_dim)      # (B, T, D)
+        # Encodeur online (gradient actif)
+        z_ctx = self.encoder(frames_flat).view(B, T, self.embed_dim)         # (B, T, D)
 
-        # Encodeur target EMA (no gradient) — cible stable pour la prédiction
+        # Encodeur target EMA (no gradient) — cible stable
         z_tgt = self.target_encoder(frames_flat).view(B, T, self.embed_dim)  # (B, T, D)
 
-        # Predictor causal : z_ctx_{0..T-2} → ẑ_{1..T}
-        z_pred = self.predictor(z_ctx[:, :-1])     # (B, T-1, D)
+        # Masquage aléatoire du contexte d'entrée du predictor
+        # On masque z_{0..T-2} ; la cible reste z_tgt_{1..T-1} (EMA, non masqué)
+        z_input = z_ctx[:, :-1].clone()            # (B, T-1, D)
+        if self.training and self.mask_ratio > 0:
+            mask = torch.rand(B, T - 1, device=frames.device) < self.mask_ratio
+            z_input[mask] = self.mask_token        # remplace par le token appris
+        else:
+            mask = None
 
-        # Prédiction loss : MSE entre prédit et cible EMA
-        pred_loss = F.mse_loss(z_pred, z_tgt[:, 1:])
+        # Predictor causal sur le contexte (potentiellement masqué)
+        z_pred = self.predictor(z_input)           # (B, T-1, D)
+
+        # Loss uniquement sur les positions masquées (comme V-JEPA)
+        # Si pas de masquage (eval/mask_ratio=0) : loss sur tout
+        z_target = z_tgt[:, 1:]
+        if mask is not None and mask.any():
+            pred_loss = F.mse_loss(z_pred[mask], z_target[mask])
+        else:
+            pred_loss = F.mse_loss(z_pred, z_target)
 
         # SIGReg sur les embeddings online
         z_flat = z_ctx.reshape(B * T, self.embed_dim)

@@ -47,9 +47,13 @@ def load_model(path: str, device) -> LeWorldModel:
         hidden_dim=args.get("hidden_dim", 512),
         n_heads=args.get("n_heads", 4),
         n_layers=args.get("n_layers", 4),
-        lam=args.get("lam", 0.1),
+        lam=args.get("lam", 0.5),
+        ema_momentum=args.get("ema_momentum", 0.996),
+        mask_ratio=args.get("mask_ratio", 0.4),
     ).to(device)
-    model.load_state_dict(ckpt["model"])
+    missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+    if missing:
+        print(f"  [info] clés absentes du checkpoint (target encoder initialisé depuis online) : {missing[:3]}...")
     model.eval()
     print(f"LeWorldModel : epoch={ckpt.get('epoch','?')}  "
           f"val_loss={ckpt.get('val_loss', float('nan')):.5f}")
