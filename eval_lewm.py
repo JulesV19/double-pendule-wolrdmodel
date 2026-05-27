@@ -186,11 +186,13 @@ def prediction_horizon(model: LeWorldModel, val_loader, device,
         for h in horizons:
             if T <= h:
                 continue
-            ctx    = z_all[:, :T - h]                        # (B, T-h, D)
-            z_tgt  = z_all[:, T - h:]                        # (B, h, D)
-            # Le predictor causal : ctx[t] prédit ctx[t+1]
-            # On prend les h dernières sorties comme prédictions des h frames suivantes
-            z_pred = F.normalize(model.predictor(ctx)[:, -h:], dim=-1)
+            # Vrai rollout h-step : dérouler le predictor h fois depuis z_t
+            z_ctx_h = z_all[:, :T - h]                       # (B, T-h, D)
+            z_roll  = z_ctx_h
+            for _ in range(h):
+                z_roll = model.predictor(z_roll)              # (B, T-h, D)
+            z_pred = F.normalize(z_roll, dim=-1)
+            z_tgt  = z_all[:, h:]                            # (B, T-h, D)
             results[h].append((z_pred * z_tgt).sum(-1).mean().item())
 
     print(f"  {'Horizon':>8}  {'Cos-sim':>8}")

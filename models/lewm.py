@@ -105,12 +105,17 @@ class LeWorldModel(nn.Module):
         z_tgt = self.target_encoder(frames_flat).view(B, T, self.embed_dim) # (B, T, D)
 
         # Rollout K steps : z_t → z_{t+K} en enchaînant le predictor
-        # Force ω dans z : sans vitesse, les erreurs s'accumulent sur K steps
+        # Force ω dans z : sans vitesse, les erreurs s'accumulent sur K steps.
+        # On utilise la cosine distance (pas MSE) pour éviter le raccourci "moyenne
+        # des deux modes ±ω" : outputer la moyenne de deux directions opposées donne
+        # cos-sim ≈ 0 (worst case), ce qui force le predictor à choisir une direction.
         K      = self.rollout_k
         z_roll = z_ctx[:, :T - K]          # (B, T-K, D) — points de départ
         for _ in range(K):
             z_roll = self.predictor(z_roll)
-        pred_loss = F.mse_loss(z_roll, z_tgt[:, K:])
+        z_roll_n  = F.normalize(z_roll,           dim=-1)
+        z_tgt_n   = F.normalize(z_tgt[:, K:],     dim=-1)
+        pred_loss = (1.0 - (z_roll_n * z_tgt_n).sum(dim=-1)).mean()
 
         z_flat = z_ctx.reshape(B * T, self.embed_dim)
         sigreg = sigreg_loss(z_flat, self.n_proj)
