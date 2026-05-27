@@ -37,7 +37,7 @@ def evaluate(model: LeWorldModel, loader, device) -> dict:
     model.eval()
     sums = {"loss": 0.0, "pred_loss": 0.0, "sigreg": 0.0}
     for frames, _ in loader:
-        m = model(frames.to(device))
+        m = model(frames.to(device, non_blocking=True))
         for k in sums:
             sums[k] += m[k].item()
     n = len(loader)
@@ -84,7 +84,8 @@ def train(args):
 
     start_epoch = 1
     if args.checkpoint:
-        ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+        # torch.load does not accept a `weights_only` kwarg; use map_location only
+        ckpt = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         start_epoch = ckpt["epoch"] + 1
@@ -104,7 +105,7 @@ def train(args):
         sums = {"loss": 0.0, "pred_loss": 0.0, "sigreg": 0.0}
 
         for frames, _ in train_loader:
-            frames = frames.to(device)
+            frames = frames.to(device, non_blocking=True)
             optimizer.zero_grad()
             m = model(frames)
             m["loss"].backward()
