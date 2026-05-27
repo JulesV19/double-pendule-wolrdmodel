@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 
-def sigreg_loss(z: torch.Tensor, n_proj: int = 512) -> torch.Tensor:
+def sigreg_loss(z: torch.Tensor, n_proj: int = 512, max_n: int = 256) -> torch.Tensor:
     """
     SIGReg : Statistical Isotropic Gaussian Regularizer (LeWorldModel, 2026).
 
@@ -31,6 +31,12 @@ def sigreg_loss(z: torch.Tensor, n_proj: int = 512) -> torch.Tensor:
         scalaire ≥ 0  (0 = distribution parfaitement gaussienne isotrope)
     """
     N, D = z.shape
+
+    # Subsample pour borner la mémoire O(N² × n_proj)
+    if N > max_n:
+        idx = torch.randperm(N, device=z.device)[:max_n]
+        z = z[idx]
+        N = max_n
 
     # Standardiser globalement (moyenne 0, variance 1 par dimension)
     z = (z - z.mean(0)) / (z.std(0) + 1e-8)
