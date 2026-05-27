@@ -87,10 +87,8 @@ class DatasetBrowser:
 
         self.ax_frame  = self.fig.add_subplot(gs[0, 0])
         self.ax_diff   = self.fig.add_subplot(gs[1, 0])
-        self.ax_th1    = self.fig.add_subplot(gs[0, 1])
-        self.ax_th2    = self.fig.add_subplot(gs[0, 2])
-        self.ax_om1    = self.fig.add_subplot(gs[1, 1])
-        self.ax_om2    = self.fig.add_subplot(gs[1, 2])
+        self.ax_th     = self.fig.add_subplot(gs[0, 1])
+        self.ax_om     = self.fig.add_subplot(gs[1, 1])
         self.ax_phase  = self.fig.add_subplot(gs[:, 3])
         self.ax_info   = self.fig.add_subplot(gs[:, 4])
 
@@ -137,11 +135,9 @@ class DatasetBrowser:
     def _style_axes(self):
         self._style(self.ax_frame, "Frame")
         self._style(self.ax_diff,  "Diff  (mouvement visible)")
-        self._style(self.ax_th1,   "θ₁", "frame", "rad")
-        self._style(self.ax_th2,   "θ₂", "frame", "rad")
-        self._style(self.ax_om1,   "ω₁", "frame", "rad/s")
-        self._style(self.ax_om2,   "ω₂", "frame", "rad/s")
-        self._style(self.ax_phase, "Phase  θ₁ vs ω₁", "θ₁ (rad)", "ω₁ (rad/s)")
+        self._style(self.ax_th,    "θ", "frame", "rad")
+        self._style(self.ax_om,    "ω", "frame", "rad/s")
+        self._style(self.ax_phase, "Phase  θ vs ω", "θ (rad)", "ω (rad/s)")
         self.ax_info.set_facecolor(DARK2)
         self.ax_info.axis("off")
         for sp in self.ax_info.spines.values():
@@ -163,20 +159,18 @@ class DatasetBrowser:
         self.ax_diff.axis("off")
 
         # Courbes d'état
-        self.ln_th1, = self.ax_th1.plot(ts, s[:, 0], color=COLORS[0], lw=1)
-        self.ln_th2, = self.ax_th2.plot(ts, s[:, 1], color=COLORS[1], lw=1)
-        self.ln_om1, = self.ax_om1.plot(ts, s[:, 2], color=COLORS[2], lw=1)
-        self.ln_om2, = self.ax_om2.plot(ts, s[:, 3], color=COLORS[3], lw=1)
+        self.ln_th, = self.ax_th.plot(ts, s[:, 0], color=COLORS[0], lw=1)
+        self.ln_om, = self.ax_om.plot(ts, s[:, 1], color=COLORS[2], lw=1)
 
         # Curseurs verticaux
         self.vlines = [
             ax.axvline(0, color="white", lw=0.8, alpha=0.6)
-            for ax in (self.ax_th1, self.ax_th2, self.ax_om1, self.ax_om2)
+            for ax in (self.ax_th, self.ax_om)
         ]
 
         # Portrait de phase
         self.ln_phase, = self.ax_phase.plot(
-            s[:, 0], s[:, 2], color=COLORS[0], lw=0.8, alpha=0.5)
+            s[:, 0], s[:, 1], color=COLORS[0], lw=0.8, alpha=0.5)
         self.pt_phase, = self.ax_phase.plot([], [], "o", color="white", ms=5, zorder=5)
 
         # Infobox
@@ -190,7 +184,7 @@ class DatasetBrowser:
         self.im_diff.set_data(self.diffs[t].mean(axis=-1))
         for vl in self.vlines:
             vl.set_xdata([t, t])
-        self.pt_phase.set_data([self.states[t, 0]], [self.states[t, 2]])
+        self.pt_phase.set_data([self.states[t, 0]], [self.states[t, 1]])
 
         # Slider sans récursion
         self.slider.eventson = False
@@ -204,24 +198,19 @@ class DatasetBrowser:
         ts = np.arange(T)
         s  = self.states
 
-        self.ln_th1.set_data(ts, s[:, 0])
-        self.ln_th2.set_data(ts, s[:, 1])
-        self.ln_om1.set_data(ts, s[:, 2])
-        self.ln_om2.set_data(ts, s[:, 3])
+        self.ln_th.set_data(ts, s[:, 0])
+        self.ln_om.set_data(ts, s[:, 1])
 
-        for ax, col in zip(
-            (self.ax_th1, self.ax_th2, self.ax_om1, self.ax_om2),
-            (0, 1, 2, 3),
-        ):
+        for ax, col in zip((self.ax_th, self.ax_om), (0, 1)):
             ax.set_xlim(0, T - 1)
             lo, hi = s[:, col].min(), s[:, col].max()
             margin  = max(abs(hi - lo) * 0.12, 0.1)
             ax.set_ylim(lo - margin, hi + margin)
 
         self.ax_phase.clear()
-        self._style(self.ax_phase, "Phase  θ₁ vs ω₁", "θ₁ (rad)", "ω₁ (rad/s)")
+        self._style(self.ax_phase, "Phase  θ vs ω", "θ (rad)", "ω (rad/s)")
         self.ln_phase, = self.ax_phase.plot(
-            s[:, 0], s[:, 2], color=COLORS[0], lw=0.8, alpha=0.5)
+            s[:, 0], s[:, 1], color=COLORS[0], lw=0.8, alpha=0.5)
         self.pt_phase, = self.ax_phase.plot([], [], "o", color="white", ms=5, zorder=5)
 
         self.slider.valmax = T - 1
@@ -241,10 +230,8 @@ class DatasetBrowser:
         lines = [
             ("STATS TRAJECTOIRE", "", "white"),
             ("", "", "white"),
-            ("θ₁", f"[{s[:,0].min():.2f}, {s[:,0].max():.2f}] rad", COLORS[0]),
-            ("θ₂", f"[{s[:,1].min():.2f}, {s[:,1].max():.2f}] rad", COLORS[1]),
-            ("ω₁", f"[{s[:,2].min():.2f}, {s[:,2].max():.2f}] rad/s", COLORS[2]),
-            ("ω₂", f"[{s[:,3].min():.2f}, {s[:,3].max():.2f}] rad/s", COLORS[3]),
+            ("θ", f"[{s[:,0].min():.2f}, {s[:,0].max():.2f}] rad", COLORS[0]),
+            ("ω", f"[{s[:,1].min():.2f}, {s[:,1].max():.2f}] rad/s", COLORS[2]),
             ("", "", "white"),
             ("Frames", str(self.T), "#aaa"),
             ("dt", "0.05 s", "#aaa"),

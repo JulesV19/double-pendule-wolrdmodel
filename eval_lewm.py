@@ -28,7 +28,7 @@ from dataset import PendulumSeqDataset
 
 
 DARK        = "#111"
-STATE_NAMES = ["θ₁", "θ₂", "ω₁", "ω₂"]
+STATE_NAMES = ["θ", "ω"]
 
 
 # ── Setup ──────────────────────────────────────────────────────────────────────
@@ -91,7 +91,7 @@ def collect_embeddings(model, loader, device):
 
 def compute_r2s(preds: np.ndarray, targets: np.ndarray):
     r2s = []
-    for i in range(4):
+    for i in range(targets.shape[1]):
         ss_res = ((targets[:, i] - preds[:, i]) ** 2).sum()
         ss_tot = ((targets[:, i] - targets[:, i].mean()) ** 2).sum()
         r2s.append(float(1 - ss_res / (ss_tot + 1e-8)))
@@ -115,20 +115,21 @@ def linear_probe(model, train_loader, val_loader, device, n_epochs=50):
     Z_tr, S_tr, _ = collect_embeddings(model, train_loader, device)
     Z_va, S_va, _ = collect_embeddings(model, val_loader,   device)
 
-    D  = Z_tr.shape[1]
+    D       = Z_tr.shape[1]
+    n_states = S_tr.shape[1]
     Zt = torch.from_numpy(Z_tr).float().to(device)
     St = torch.from_numpy(S_tr).float().to(device)
     Zv = torch.from_numpy(Z_va).float().to(device)
 
     # Probe linéaire
-    lin_preds = _run_probe(nn.Linear(D, 4).to(device), Zt, St, Zv, n_epochs)
+    lin_preds = _run_probe(nn.Linear(D, n_states).to(device), Zt, St, Zv, n_epochs)
     r2s_lin   = compute_r2s(lin_preds, S_va)
 
-    # Probe MLP 2 couches (D → 256 → 256 → 4)
+    # Probe MLP 2 couches
     mlp = nn.Sequential(
         nn.Linear(D, 256), nn.ReLU(),
         nn.Linear(256, 256), nn.ReLU(),
-        nn.Linear(256, 4),
+        nn.Linear(256, n_states),
     ).to(device)
     mlp_preds = _run_probe(mlp, Zt, St, Zv, n_epochs * 4, lr=3e-4)
     r2s_mlp   = compute_r2s(mlp_preds, S_va)
@@ -228,15 +229,15 @@ def save_figure(r2s, r2_global, uniformity, alignment, horizon_sims,
     ax.set_title("Probe R² par état", color="white", fontsize=10)
     ax.legend(fontsize=7, labelcolor="white", facecolor="#222", edgecolor="#444")
 
-    # Scatter θ₁
+    # Scatter θ
     ax2 = fig.add_subplot(gs[0, 1]); style(ax2)
     ax2.scatter(s_val[:, 0], preds[:, 0], s=4, alpha=0.3, color="#4fc3f7")
     lo = min(s_val[:, 0].min(), preds[:, 0].min())
     hi = max(s_val[:, 0].max(), preds[:, 0].max())
     ax2.plot([lo, hi], [lo, hi], color="#ff8a65", lw=1.2, ls="--", label="y=x")
-    ax2.set_xlabel("θ₁ réel", color="white", fontsize=9)
-    ax2.set_ylabel("θ₁ prédit", color="white", fontsize=9)
-    ax2.set_title(f"Scatter θ₁  (R²={r2s[0]:.3f})", color="white", fontsize=10)
+    ax2.set_xlabel("θ réel", color="white", fontsize=9)
+    ax2.set_ylabel("θ prédit", color="white", fontsize=9)
+    ax2.set_title(f"Scatter θ  (R²={r2s[0]:.3f})", color="white", fontsize=10)
     ax2.legend(fontsize=8, labelcolor="white", facecolor="#222", edgecolor="#444")
 
     # Uniformité / Alignement
