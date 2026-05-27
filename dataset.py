@@ -68,8 +68,8 @@ class PendulumSeqDataset(Dataset):
             frames = frames[start:start + self.seq_len]
             states = states[start:start + self.seq_len]
 
-        frames_t = torch.from_numpy(frames).permute(0, 3, 1, 2).float() / 255.0
-        states_t = torch.from_numpy(states).float()
+        frames_t = torch.from_numpy(np.ascontiguousarray(frames)).permute(0, 3, 1, 2).float() / 255.0
+        states_t = torch.from_numpy(np.ascontiguousarray(states)).float()
         return frames_t, states_t
 
 
@@ -92,10 +92,11 @@ def make_seq_dataloaders(
         dataset, [n_train, n_val],
         generator=torch.Generator().manual_seed(seed),
     )
+    pin = torch.cuda.is_available()   # pin_memory non supporté sur MPS
     train_loader = DataLoader(train_ds, batch_size=batch_size,
-                              shuffle=True,  num_workers=num_workers, pin_memory=True)
+                              shuffle=True,  num_workers=num_workers, pin_memory=pin)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size,
-                              shuffle=False, num_workers=num_workers, pin_memory=True)
+                              shuffle=False, num_workers=num_workers, pin_memory=pin)
     return train_loader, val_loader
 
 
@@ -113,8 +114,9 @@ def make_dataloaders(
         dataset, [n_train, n_val],
         generator=torch.Generator().manual_seed(seed),
     )
+    pin = torch.cuda.is_available()
     train_loader = DataLoader(train_ds, batch_size=batch_size,
-                              shuffle=True,  num_workers=num_workers, pin_memory=True)
+                              shuffle=True,  num_workers=num_workers, pin_memory=pin)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size,
-                              shuffle=False, num_workers=num_workers, pin_memory=True)
+                              shuffle=False, num_workers=num_workers, pin_memory=pin)
     return train_loader, val_loader

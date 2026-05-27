@@ -1,13 +1,18 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Decoder(nn.Module):
     """
     Symétrique de ContextEncoder : z ∈ R^embed_dim → frame ∈ [0,1]^(3, 64, 64).
 
+    z est normalisé en entrée (L2) pour que le décodeur soit invariant à la
+    magnitude — essentiel pendant le dreaming où le predictor peut faire dériver
+    la norme de z au fil des steps.
+
     Architecture miroir du CNN encoder :
-      FC → reshape (256, 4, 4)
+      L2-norm → FC → reshape (256, 4, 4)
       → ConvTranspose ×4 → (3, 64, 64)
     """
 
@@ -38,8 +43,10 @@ class Decoder(nn.Module):
             B, T, D = z.shape
             z = z.reshape(B * T, D)
 
-        x = self.fc(z).view(z.shape[0], 256, 4, 4)
-        out = self.deconv(x)                           # (B(*T), 3, 64, 64)
+        z = F.normalize(z, dim=-1)             # invariant à la magnitude
+        n = z.shape[0]
+        x = self.fc(z).view(n, 256, 4, 4)
+        out = self.deconv(x)                   # (B(*T), 3, 64, 64)
 
         if seq:
             out = out.view(B, T, 3, 64, 64)
