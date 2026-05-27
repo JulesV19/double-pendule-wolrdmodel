@@ -61,7 +61,7 @@ class LeWorldModel(nn.Module):
         lam:          float = 0.1,
         n_proj:       int   = 512,
         ema_momentum: float = 0.996,
-        rollout_k:    int   = 2,     # steps de prédiction pour forcer ω dans z
+        rollout_k:    int   = 5,     # steps de prédiction pour forcer ω dans z
         # conservés pour compatibilité CLI mais non utilisés
         n_heads:      int   = 4,
         n_layers:     int   = 4,

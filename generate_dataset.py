@@ -119,8 +119,8 @@ def generate_dataset(
 
 if __name__ == "__main__":
     generate_dataset(
-        n_trajectories=1000,
-        n_frames=50,
+        n_trajectories=2000,
+        n_frames=500,
         img_size=64,
         dt=0.05,
         output_dir="dataset/double_pendulum",

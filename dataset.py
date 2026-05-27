@@ -36,22 +36,41 @@ class PendulumFrameDataset(Dataset):
 
 class PendulumSeqDataset(Dataset):
     """
-    Returns full sequences for dynamics model training.
-    Each item: tensor (T, 3, H, W) float32 in [0, 1], states (T, 4).
+    Returns sequences for dynamics model training.
+    Each item: tensor (seq_len, 3, H, W) float32 in [0, 1], states (seq_len, S).
+
+    Si seq_len est None, retourne la trajectoire complète.
+    Si seq_len est un entier, tire une fenêtre aléatoire de seq_len frames —
+    ce qui permet d'entraîner sur de longues trajectoires (500 frames) sans
+    charger toute la séquence dans le batch GPU.
     """
 
-    def __init__(self, dataset_dir: str = "dataset/double_pendulum"):
-        self.files = sorted(Path(dataset_dir).glob("traj_*.npz"))
+    def __init__(self, dataset_dir: str = "dataset/double_pendulum",
+                 seq_len: int | None = None):
+        self.files   = sorted(Path(dataset_dir).glob("traj_*.npz"))
         assert self.files, f"No .npz files found in {dataset_dir}"
+        self.seq_len = seq_len
+
+        # Inférer la longueur totale depuis le premier fichier
+        first = np.load(self.files[0])
+        self.traj_len = first["frames"].shape[0]
 
     def __len__(self):
         return len(self.files)
 
     def __getitem__(self, idx):
-        data = np.load(self.files[idx])
-        frames = torch.from_numpy(data["frames"]).permute(0, 3, 1, 2).float() / 255.0
-        states = torch.from_numpy(data["states"]).float()
-        return frames, states
+        data   = np.load(self.files[idx])
+        frames = data["frames"]   # (T, H, W, 3) uint8
+        states = data["states"]   # (T, S) float
+
+        if self.seq_len is not None and self.traj_len > self.seq_len:
+            start  = np.random.randint(0, self.traj_len - self.seq_len + 1)
+            frames = frames[start:start + self.seq_len]
+            states = states[start:start + self.seq_len]
+
+        frames_t = torch.from_numpy(frames).permute(0, 3, 1, 2).float() / 255.0
+        states_t = torch.from_numpy(states).float()
+        return frames_t, states_t
 
 
 def make_seq_dataloaders(
@@ -60,9 +79,13 @@ def make_seq_dataloaders(
     val_split: float = 0.1,
     num_workers: int = 4,
     seed: int = 42,
+    seq_len: int = 50,
 ):
-    """Dataloaders de séquences (frames, states) pour l'entraînement JEPA."""
-    dataset = PendulumSeqDataset(dataset_dir)
+    """Dataloaders de séquences (frames, states) pour l'entraînement JEPA.
+
+    seq_len : longueur de la fenêtre tirée aléatoirement dans chaque trajectoire.
+    """
+    dataset = PendulumSeqDataset(dataset_dir, seq_len=seq_len)
     n_val   = int(len(dataset) * val_split)
     n_train = len(dataset) - n_val
     train_ds, val_ds = random_split(

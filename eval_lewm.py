@@ -74,11 +74,13 @@ def make_loaders(dataset_dir: str, val_split=0.1, seed=42):
 # ── Collecte des embeddings ────────────────────────────────────────────────────
 
 @torch.no_grad()
-def collect_embeddings(model, loader, device):
+def collect_embeddings(model, loader, device, normalize=False):
     all_z, all_s, seqs = [], [], []
     for frames, states in loader:
         z    = model.encode(frames.to(device))         # (B, T, D)
-        z_np = F.normalize(z, dim=-1).cpu().numpy()
+        if normalize:
+            z = F.normalize(z, dim=-1)
+        z_np = z.cpu().numpy()
         s_np = states.numpy()
         for b in range(len(z_np)):
             all_z.append(z_np[b])
@@ -315,8 +317,8 @@ def main(args):
 
     r2s, r2_global, preds, s_val, r2s_mlp, r2_mlp = linear_probe(
         model, train_loader, val_loader, device, n_epochs=args.probe_epochs)
-    _, _, seqs_train = collect_embeddings(model, train_loader, device)
-    _, _, seqs_val   = collect_embeddings(model, val_loader,   device)
+    _, _, seqs_train = collect_embeddings(model, train_loader, device, normalize=True)
+    _, _, seqs_val   = collect_embeddings(model, val_loader,   device, normalize=True)
     uniformity, alignment = uniformity_alignment(seqs_train, seqs_val)
     horizon_sims = prediction_horizon(model, val_loader, device, horizons=args.horizons)
 

@@ -54,6 +54,7 @@ def train(args):
         dataset_dir=args.dataset_dir,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        seq_len=args.seq_len,
     )
     print(f"Train : {len(train_loader)} batches  |  Val : {len(val_loader)} batches")
 
@@ -191,6 +192,8 @@ def _save_plot(history, path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-dir",  default="dataset/double_pendulum")
+    parser.add_argument("--seq-len",      type=int,   default=100,
+                        help="longueur de la fenêtre tirée aléatoirement dans chaque trajectoire")
     parser.add_argument("--embed-dim",    type=int,   default=128)
     parser.add_argument("--hidden-dim",   type=int,   default=512)
     parser.add_argument("--n-heads",      type=int,   default=4)
@@ -199,7 +202,7 @@ if __name__ == "__main__":
                         help="poids SIGReg")
     parser.add_argument("--ema-momentum", type=float, default=0.996,
                         help="momentum EMA du target encoder (τ)")
-    parser.add_argument("--rollout-k",    type=int,   default=2,
+    parser.add_argument("--rollout-k",    type=int,   default=5,
                         help="nombre de steps de rollout pour la pred loss")
     parser.add_argument("--n-proj",       type=int,   default=512,
                         help="projections SIGReg (robuste à ce choix)")
