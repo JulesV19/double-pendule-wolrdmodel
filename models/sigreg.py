@@ -49,7 +49,7 @@ def sigreg_loss(z: torch.Tensor, n_proj: int = 512, max_n: int = 256) -> torch.T
     #   Détecte et corrige les dimensions effondrées (std ≈ 0) avec un gradient
     #   actif dès que std < 1, indépendamment des autres dimensions.
     mean_penalty = z.mean(0).pow(2).mean()
-    var_penalty  = F.relu(1.0 - z.std(dim=0, unbiased=False)).mean()
+    var_penalty  = (z.std(dim=0, unbiased=False) - 1.0).pow(2).mean()
 
     # ── Projections aléatoires sur la sphère S^{D-1} ──────────────────────────
     u = torch.randn(D, n_proj, device=z.device, dtype=z.dtype)
