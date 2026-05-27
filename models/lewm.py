@@ -127,7 +127,7 @@ class LeWorldModel(nn.Module):
 
         # Predictor causal : z_{0..T-2} → ẑ_{1..T}
         z_pred = self.predictor(z[:, :-1])         # (B, T-1, D)
-        z_tgt  = z[:, 1:]                          # (B, T-1, D)  — pas de stop-gradient
+        z_tgt  = z[:, 1:].detach()                 # (B, T-1, D)  — stop-gradient sur la cible
 
         # Prédiction loss
         pred_loss = F.mse_loss(z_pred, z_tgt)

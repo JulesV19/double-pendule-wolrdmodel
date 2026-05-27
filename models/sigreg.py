@@ -38,18 +38,16 @@ def sigreg_loss(z: torch.Tensor, n_proj: int = 512, max_n: int = 256) -> torch.T
         z = z[idx]
         N = max_n
 
-    # Standardiser globalement (moyenne 0, variance 1 par dimension)
-    z = (z - z.mean(0)) / (z.std(0) + 1e-8)
-
     # Directions aléatoires uniformes sur la sphère S^{D-1}
     u = torch.randn(D, n_proj, device=z.device, dtype=z.dtype)
     u = u / u.norm(dim=0, keepdim=True)          # (D, n_proj)
 
     # Projections 1D : h[n, m] = z[n] · u[m]
+    # Pas de standardisation — la formule d'Epps-Pulley compare nativement
+    # contre N(0,1), ce qui pénalise les erreurs de moyenne ET de variance.
+    # Standardiser ici rendrait SIGReg aveugle au collapse (gradient nul quand
+    # tous les embeddings sont identiques, car z - mean → 0 et std → 0).
     h = z @ u                                     # (N, n_proj)
-
-    # Standardiser chaque projection
-    h = (h - h.mean(0)) / (h.std(0) + 1e-8)      # (N, n_proj)
 
     # ── Statistique d'Epps-Pulley (vectorisée sur toutes les projections) ──
     #
