@@ -1,6 +1,12 @@
 # LeWorldModel
 
-A JEPA-style world model trained on a simple pendulum. The model learns to predict future latent states without any explicit supervision on the physical variables (θ, ω).
+A clean implementation of **LeWorldModel** (Maes et al., 2026) trained on a simple pendulum. LeWorldModel is a JEPA architecture (LeCun et al.) — the model predicts in latent space rather than pixel space, and learns physical dynamics without any explicit supervision on the state variables (θ, ω).
+
+> **Based on:**
+> - Maes et al., *"Le World Model"*, arXiv:2603.19312 (2026) — architecture implemented here
+> - LeCun, *"A Path Towards Autonomous Machine Intelligence"* (2022) — JEPA framework
+> - Assran et al., *"Self-Supervised Learning from Images with a Joint-Embedding Predictive Architecture"* (I-JEPA, CVPR 2023)
+> - Bardes et al., *"V-JEPA: Latent Video Prediction for Visual Representation"* (V-JEPA, 2024)
 
 ## Architecture
 
