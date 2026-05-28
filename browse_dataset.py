@@ -1,10 +1,10 @@
 """
-Navigateur interactif du dataset double pendule.
+Navigateur interactif du dataset pendule simple.
 
 Affiche pour chaque trajectoire :
   • Frame animée + canal diff (signal de mouvement pour frame stacking)
-  • Courbes θ₁, θ₂, ω₁, ω₂ avec curseur temporel
-  • Portrait de phase θ₁ vs ω₁
+  • Courbes θ, ω avec curseur temporel
+  • Portrait de phase θ vs ω
 
 Contrôles :
   ◀ Prev / Next ▶  — changer de trajectoire
@@ -13,7 +13,7 @@ Contrôles :
 
 Usage:
   python3 browse_dataset.py
-  python3 browse_dataset.py --dataset-dir dataset/double_pendulum --fps 15
+  python3 browse_dataset.py --dataset-dir dataset/pendulum --fps 15
 """
 
 import argparse
@@ -36,7 +36,7 @@ COLORS = ["#4fc3f7", "#ff8a65", "#a5d6a7", "#ce93d8"]   # θ1 θ2 ω1 ω2
 def load_traj(path: Path):
     d = np.load(path)
     frames = d["frames"]                              # (T, H, W, 3) uint8
-    states = d["states"].astype(np.float32)          # (T, 4) float32
+    states = d["states"].astype(np.float32)          # (T, 2) float32: [theta, omega]
     diffs  = np.zeros_like(frames, dtype=np.float32)
     diffs[1:] = frames[1:].astype(np.float32) - frames[:-1].astype(np.float32)
     diffs = np.clip(diffs / 255.0, -1.0, 1.0)
@@ -303,7 +303,7 @@ class DatasetBrowser:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-dir", default="dataset/double_pendulum")
+    parser.add_argument("--dataset-dir", default="dataset/pendulum")
     parser.add_argument("--fps", type=int, default=20)
     args = parser.parse_args()
     DatasetBrowser(args.dataset_dir, fps=args.fps)

@@ -193,7 +193,7 @@ def _save_plot(history, path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset-dir",  default="dataset/double_pendulum")
+    parser.add_argument("--dataset-dir",  default="dataset/pendulum")
     parser.add_argument("--seq-len",      type=int,   default=100,
                         help="longueur de la fenêtre tirée aléatoirement dans chaque trajectoire")
     parser.add_argument("--embed-dim",    type=int,   default=128)

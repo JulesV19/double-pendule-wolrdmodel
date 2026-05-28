@@ -335,7 +335,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint",   required=True)
-    parser.add_argument("--dataset-dir",  default="dataset/double_pendulum")
+    parser.add_argument("--dataset-dir",  default="dataset/pendulum")
     parser.add_argument("--probe-epochs", type=int, default=50)
     parser.add_argument("--horizons",     type=int, nargs="+", default=[1, 2, 5, 10])
     parser.add_argument("--save",         default=None)

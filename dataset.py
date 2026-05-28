@@ -6,11 +6,11 @@ from pathlib import Path
 
 class PendulumFrameDataset(Dataset):
     """
-    Returns individual frames (not sequences) for VAE training.
+    Returns individual frames (not sequences) for decoder training.
     Each item: tensor (3, H, W) float32 in [0, 1].
     """
 
-    def __init__(self, dataset_dir: str = "dataset/double_pendulum"):
+    def __init__(self, dataset_dir: str = "dataset/pendulum"):
         self.files = sorted(Path(dataset_dir).glob("traj_*.npz"))
         assert self.files, f"No .npz files found in {dataset_dir}"
 
@@ -45,7 +45,7 @@ class PendulumSeqDataset(Dataset):
     charger toute la séquence dans le batch GPU.
     """
 
-    def __init__(self, dataset_dir: str = "dataset/double_pendulum",
+    def __init__(self, dataset_dir: str = "dataset/pendulum",
                  seq_len: int | None = None):
         self.files   = sorted(Path(dataset_dir).glob("traj_*.npz"))
         assert self.files, f"No .npz files found in {dataset_dir}"
@@ -74,7 +74,7 @@ class PendulumSeqDataset(Dataset):
 
 
 def make_seq_dataloaders(
-    dataset_dir: str = "dataset/double_pendulum",
+    dataset_dir: str = "dataset/pendulum",
     batch_size: int = 16,
     val_split: float = 0.1,
     num_workers: int = 4,
@@ -101,7 +101,7 @@ def make_seq_dataloaders(
 
 
 def make_dataloaders(
-    dataset_dir: str = "dataset/double_pendulum",
+    dataset_dir: str = "dataset/pendulum",
     batch_size: int = 64,
     val_split: float = 0.1,
     num_workers: int = 4,

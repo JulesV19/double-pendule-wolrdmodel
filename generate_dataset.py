@@ -1,7 +1,7 @@
 """
 Simple pendulum dataset generator for world model training.
 
-Output: dataset/double_pendulum/traj_XXXX.npz
+Output: dataset/pendulum/traj_XXXX.npz
 Each file contains:
   - frames: (T, H, W, 3) uint8  — rendered frames
   - states: (T, 2) float64      — [theta, omega]
@@ -79,7 +79,7 @@ def generate_dataset(
     n_frames:       int = 50,
     img_size:       int = 64,
     dt:             float = 0.05,
-    output_dir:     str = "dataset/double_pendulum",
+    output_dir:     str = "dataset/pendulum",
     seed:           int = 42,
 ):
     out = Path(output_dir)
@@ -128,7 +128,7 @@ if __name__ == "__main__":
     parser.add_argument("--n_frames",       type=int,   default=500)
     parser.add_argument("--img_size",       type=int,   default=64)
     parser.add_argument("--dt",             type=float, default=0.05)
-    parser.add_argument("--output_dir",     type=str,   default="dataset/double_pendulum")
+    parser.add_argument("--output_dir",     type=str,   default="dataset/pendulum")
     parser.add_argument("--seed",           type=int,   default=42)
     args = parser.parse_args()
 

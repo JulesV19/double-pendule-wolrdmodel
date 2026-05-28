@@ -1,5 +1,5 @@
 """
-Interactive viewer for the double pendulum dataset.
+Interactive viewer for the simple pendulum dataset.
 
 Usage:
   python3 visualize.py                  # random trajectory
@@ -15,7 +15,7 @@ import matplotlib.animation as animation
 from pathlib import Path
 
 
-DATASET_DIR = Path("dataset/double_pendulum")
+DATASET_DIR = Path("dataset/pendulum")
 
 
 def load_traj(idx: int):
@@ -52,10 +52,10 @@ def view_single(idx: int, save: bool = False):
     # Right: state plot (angles over time)
     ax_state = axes[1]
     t = np.arange(n_frames) * 0.05
-    ax_state.plot(t, states[:, 0], color="#4fc3f7", lw=1, label="θ₁")
-    ax_state.plot(t, states[:, 1], color="#ff8a65", lw=1, label="θ₂")
+    ax_state.plot(t, states[:, 0], color="#4fc3f7", lw=1, label="θ")
+    ax_state.plot(t, states[:, 1], color="#ff8a65", lw=1, label="ω")
     ax_state.set_xlabel("time (s)", color="white", fontsize=8)
-    ax_state.set_ylabel("angle (rad)", color="white", fontsize=8)
+    ax_state.set_ylabel("θ (rad) / ω (rad/s)", color="white", fontsize=8)
     ax_state.tick_params(colors="white", labelsize=7)
     for spine in ax_state.spines.values():
         spine.set_edgecolor("#444")

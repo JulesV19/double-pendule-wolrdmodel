@@ -134,7 +134,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint",  required=True,
                         help="checkpoint LeWorldModel (encodeur)")
-    parser.add_argument("--dataset-dir", default="dataset/double_pendulum")
+    parser.add_argument("--dataset-dir", default="dataset/pendulum")
     parser.add_argument("--epochs",      type=int,   default=30)
     parser.add_argument("--batch-size",  type=int,   default=32)
     parser.add_argument("--lr",          type=float, default=3e-4)
