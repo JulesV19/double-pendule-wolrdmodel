@@ -25,10 +25,7 @@ def simulate(n_frames, dt, rng, L=1.0, g=9.81):
     # E_max = m*g*L*2  (sommet), E = 0.5*omega^2 - g/L*cos(theta)
     # Pour osciller : 0.5*omega^2 < g/L*(1 + cos(theta))
     while True:
-        if rng.random() < 0.5:
-            theta0 = rng.choice([-1, 1]) * rng.uniform(1.8, np.pi * 0.9)
-        else:
-            theta0 = rng.uniform(-np.pi * 0.9, np.pi * 0.9)
+        theta0 = rng.uniform(-np.pi * 0.9, np.pi * 0.9)
         omega0 = rng.uniform(-4.0, 4.0)
         energy = 0.5 * omega0 ** 2 - g / L * np.cos(theta0)
         if energy < g / L:   # pendule oscillant (pas de rotation complète)

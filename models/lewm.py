@@ -32,7 +32,7 @@ class TransitionPredictor(nn.Module):
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """z: (B, T, D) → ẑ: (B, T, D)  —  ẑ[:, t] prédit z[:, t+1]"""
-        return self.net(z)
+        return z + self.net(z)
 
 
 class LeWorldModel(nn.Module):
