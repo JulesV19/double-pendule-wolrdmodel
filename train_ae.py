@@ -113,7 +113,7 @@ def train(args):
         for frames, _ in train_loader:
             frames = frames.to(device, non_blocking=True)
             optimizer.zero_grad()
-            m = model(frames)
+            m = model(frames, var_lambda=args.var_lambda)
             m["loss"].backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -151,6 +151,11 @@ def train(args):
             f"  {elapsed:.1f}s"
             + ("  <-- best" if improved else "")
         )
+        if epoch == 1 or epoch % 5 == 0:
+            with torch.no_grad():
+                m_dbg = model(next(iter(val_loader))[0].to(device), var_lambda=0.0)
+                print(f"         recon_only={m_dbg['recon_loss'].item():.5f}"
+                      f"  var_loss={m_dbg['var_loss'].item():.4f}")
 
     mem_mb = peak_memory_mb(device)
     avg_epoch_time = total_train_time / (args.epochs - start_epoch + 1)
@@ -212,5 +217,7 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-dir",     default="checkpoints")
     parser.add_argument("--vis-dir",      default="visuals")
     parser.add_argument("--checkpoint",   default=None)
+    parser.add_argument("--var-lambda",   type=float, default=0.1,
+                        help="poids régularisation variance anti-collapse")
     args = parser.parse_args()
     train(args)

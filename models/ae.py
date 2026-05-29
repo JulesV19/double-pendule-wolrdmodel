@@ -106,19 +106,23 @@ class AutoEncoder(nn.Module):
 
     # ── Forward (entraînement) ───────────────────────────────────────────────
 
-    def forward(self, frames: torch.Tensor) -> dict:
+    def forward(self, frames: torch.Tensor, var_lambda: float = 0.1) -> dict:
         """
         Args:
-            frames : (B, T, 3, H, W)  normalisées [0, 1]
+            frames     : (B, T, 3, H, W)  normalisées [0, 1]
+            var_lambda : poids de la régularisation variance (anti-collapse)
 
         Returns:
-            dict : loss, recon_loss (scalaires)
+            dict : loss, recon_loss, var_loss (scalaires)
         """
         B, T, C, H, W = frames.shape
         pairs = self._make_pairs(frames)
         z = self.encoder(pairs.reshape(B * T, 6, H, W)).view(B, T, self.embed_dim)
 
-        recon_loss = torch.tensor(0.0, device=frames.device)
+        # k=0 : reconstruction directe (contrainte AE classique, manquante sans ça)
+        recon_loss = F.mse_loss(self.decoder(z), frames)
+
+        # k=1..rollout_k : prédiction future
         for k in range(1, self.rollout_k + 1):
             T_k    = T - k
             z_roll = z[:, :T_k]                    # (B, T_k, D)
@@ -127,11 +131,19 @@ class AutoEncoder(nn.Module):
             frame_pred = self.decoder(z_roll)      # (B, T_k, 3, H, W)
             frame_tgt  = frames[:, k:k + T_k]     # (B, T_k, 3, H, W)
             recon_loss = recon_loss + F.mse_loss(frame_pred, frame_tgt)
-        recon_loss = recon_loss / self.rollout_k
+        recon_loss = recon_loss / (self.rollout_k + 1)
+
+        # Régularisation variance (VICReg) : std de chaque dim >= 1 sur le batch
+        # Évite le collapse en pénalisant les embeddings constants
+        z_flat  = z.reshape(-1, self.embed_dim)          # (B*T, D)
+        var_loss = F.relu(1.0 - z_flat.var(dim=0).sqrt()).mean()
+
+        loss = recon_loss + var_lambda * var_loss
 
         return {
-            "loss":       recon_loss,
+            "loss":       loss,
             "recon_loss": recon_loss.detach(),
+            "var_loss":   var_loss.detach(),
         }
 
     # ── Inférence ────────────────────────────────────────────────────────────

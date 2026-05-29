@@ -1,13 +1,13 @@
 """
 Évaluation AutoEncoder baseline.
 
-Mêmes métriques que eval_lewm.py pour permettre une comparaison directe :
+Métriques adaptées à l'AE — comparables à eval_lewm.py là où c'est pertinent :
   1. Linear probe      — R² d'une régression linéaire z → (θ, ω)
   2. Uniformité &      — Détecte le collapse, cohérence temporelle
      Alignement
-  3. Horizon de        — Cosine similarity z_pred / z_réel à t+1, t+2, t+5, t+10
-     prédiction          (dans l'espace latent, comme pour JEPA)
-  4. Reconstruction    — MSE pixel sur la validation (spécifique AE)
+  3. Horizon pixel     — MSE pixel à t+1, t+2, t+5, t+10  (métrique naturelle AE)
+                         (vs cosine similarity latente pour JEPA)
+  4. Reconstruction    — MSE pixel moyen sur la validation
 
 Usage:
   python3 eval_ae.py --checkpoint checkpoints/ae_best.pt
@@ -121,6 +121,8 @@ def linear_probe(model, train_loader, val_loader, device, n_epochs=50):
 
     lin_preds = _run_probe(nn.Linear(D, n_states).to(device), Zt, St, Zv, n_epochs)
     r2s_lin   = compute_r2s(lin_preds, S_va)
+    # Clamp pour éviter des valeurs extrêmes dans le scatter si la probe diverge
+    lin_preds = np.clip(lin_preds, S_va.min() - 1, S_va.max() + 1)
 
     mlp = nn.Sequential(
         nn.Linear(D, 256), nn.ReLU(),
@@ -166,44 +168,50 @@ def uniformity_alignment(seqs_train, seqs_val):
     return uniformity, alignment
 
 
-# ── 3. Horizon de prédiction ───────────────────────────────────────────────────
+# ── 3. Horizon de prédiction pixel ────────────────────────────────────────────
+#
+# Pour l'AE : la métrique naturelle est la MSE pixel à chaque horizon k.
+# Le predictor a été entraîné à minimiser cette quantité — pas la cosine
+# similarity dans l'espace latent (qui est la métrique de JEPA).
 
 @torch.no_grad()
 def prediction_horizon(model: AutoEncoder, val_loader, device,
                        horizons=(1, 2, 5, 10)):
-    print("\n── Horizon de prédiction ─────────────────────────────────")
+    print("\n── Horizon de prédiction (MSE pixel) ────────────────────")
     results = {h: [] for h in horizons}
 
     for frames, _ in val_loader:
         frames = frames.to(device)
-        B, T   = frames.shape[:2]
-        z_all  = F.normalize(model.encode(frames), dim=-1)
+        B, T, C, H, W = frames.shape
+
+        pairs = model._make_pairs(frames)                              # (B, T, 6, H, W)
+        z_all = model.encoder(pairs.reshape(B * T, 6, H, W)).view(B, T, model.embed_dim)
 
         for h in horizons:
             if T <= h:
                 continue
-            z_ctx_h = z_all[:, :T - h]
-            z_roll  = z_ctx_h
+            z_roll = z_all[:, :T - h]                                 # (B, T-h, D)
             for _ in range(h):
                 z_roll = model.predictor(z_roll)
-            z_pred = F.normalize(z_roll, dim=-1)
-            z_tgt  = z_all[:, h:]
-            results[h].append((z_pred * z_tgt).sum(-1).mean().item())
+            frame_pred = model.decoder(z_roll)                        # (B, T-h, 3, H, W)
+            frame_tgt  = frames[:, h:]                                # (B, T-h, 3, H, W)
+            mse = F.mse_loss(frame_pred, frame_tgt).item()
+            results[h].append(mse)
 
-    print(f"  {'Horizon':>8}  {'Cos-sim':>8}")
-    sims = {}
+    print(f"  {'Horizon':>8}  {'MSE pixel':>10}")
+    mses = {}
     for h in horizons:
-        s = float(np.mean(results[h])) if results[h] else float("nan")
-        sims[h] = s
-        print(f"  t+{h:>6}  {s:>8.4f}")
-    return sims
+        m = float(np.mean(results[h])) if results[h] else float("nan")
+        mses[h] = m
+        print(f"  t+{h:>6}  {m:>10.6f}")
+    return mses
 
 
 # ── 4. Reconstruction MSE ──────────────────────────────────────────────────────
 
 @torch.no_grad()
 def reconstruction_quality(model: AutoEncoder, val_loader, device):
-    print("\n── Reconstruction pixel MSE ──────────────────────────────")
+    print("\n── Reconstruction pixel MSE (k=1…rollout_k, moyenne) ────")
     total = 0.0
     n     = 0
     for frames, _ in val_loader:
@@ -211,13 +219,13 @@ def reconstruction_quality(model: AutoEncoder, val_loader, device):
         total += m["recon_loss"].item()
         n += 1
     mse = total / n
-    print(f"  MSE pixel (val) = {mse:.6f}")
+    print(f"  MSE pixel val = {mse:.6f}")
     return mse
 
 
 # ── Figure de synthèse ─────────────────────────────────────────────────────────
 
-def save_figure(r2s, r2_global, uniformity, alignment, horizon_sims,
+def save_figure(r2s, r2_global, uniformity, alignment, horizon_mses,
                 recon_mse, preds, s_val, save_path, r2s_mlp=None, r2_mlp=None):
     fig = plt.figure(figsize=(15, 9), facecolor=DARK)
     gs  = gridspec.GridSpec(2, 3, figure=fig, hspace=0.45, wspace=0.38)
@@ -239,18 +247,19 @@ def save_figure(r2s, r2_global, uniformity, alignment, horizon_sims,
                hatch="//", label=f"MLP R²={r2_mlp:.3f}")
     ax.axhline(1.0, color="#555", lw=0.8, ls="--")
     ax.set_xticks(x); ax.set_xticklabels(STATE_NAMES)
-    ax.set_ylim(-0.1, max(1.1, (max(r2s_mlp) if r2s_mlp else 0) + 0.1))
+    ax.set_ylim(-0.1, 1.15)
     ax.set_title("Probe R² par état", color="white", fontsize=10)
     ax.legend(fontsize=7, labelcolor="white", facecolor="#222", edgecolor="#444")
 
-    # Scatter θ
+    # Scatter θ — axes bornés pour éviter explosion si probe diverge
     ax2 = fig.add_subplot(gs[0, 1]); style(ax2)
+    lo = float(s_val[:, 0].min()); hi = float(s_val[:, 0].max())
     ax2.scatter(s_val[:, 0], preds[:, 0], s=4, alpha=0.3, color="#4fc3f7")
-    lo = min(s_val[:, 0].min(), preds[:, 0].min())
-    hi = max(s_val[:, 0].max(), preds[:, 0].max())
     ax2.plot([lo, hi], [lo, hi], color="#ff8a65", lw=1.2, ls="--", label="y=x")
+    ax2.set_xlim(lo - 0.1, hi + 0.1)
+    ax2.set_ylim(lo - 0.5, hi + 0.5)
     ax2.set_xlabel("θ réel", color="white", fontsize=9)
-    ax2.set_ylabel("θ prédit", color="white", fontsize=9)
+    ax2.set_ylabel("θ prédit (probe)", color="white", fontsize=9)
     ax2.set_title(f"Scatter θ  (R²={r2s[0]:.3f})", color="white", fontsize=10)
     ax2.legend(fontsize=8, labelcolor="white", facecolor="#222", edgecolor="#444")
 
@@ -261,26 +270,27 @@ def save_figure(r2s, r2_global, uniformity, alignment, horizon_sims,
     ax3.bar(["Uniformité", "Alignement"], vals, color=bar_col, alpha=0.85)
     ax3.axhline(0, color="#555", lw=0.8)
     ax3.set_title("Uniformité & Alignement", color="white", fontsize=10)
+    # ylim explicite pour que les étiquettes restent dans la figure même si vals ≈ 0
+    margin = max(abs(min(vals)) * 0.3, 0.15)
+    ax3.set_ylim(min(0, min(vals)) - margin, max(0, max(vals)) + margin)
     for i, v in enumerate(vals):
-        ax3.text(i, v + (0.02 if v >= 0 else -0.08),
-                 f"{v:.3f}", ha="center", color="white", fontsize=9)
+        offset = margin * 0.3 if v >= 0 else -margin * 0.3
+        ax3.text(i, v + offset, f"{v:.3f}", ha="center", color="white", fontsize=9)
 
-    # Horizon de prédiction
+    # Horizon de prédiction pixel (courbe MSE croissante avec k)
     ax4 = fig.add_subplot(gs[1, :2]); style(ax4)
-    hs   = list(horizon_sims.keys())
-    sims = list(horizon_sims.values())
-    ax4.plot(hs, sims, color="#4fc3f7", lw=2, marker="o", markersize=7)
-    ax4.fill_between(hs, sims, alpha=0.15, color="#4fc3f7")
-    ax4.axhline(1.0, color="#555", lw=0.8, ls="--", label="sim parfaite")
-    ax4.axhline(0.0, color="#555", lw=0.8, ls=":")
+    hs   = list(horizon_mses.keys())
+    mses = list(horizon_mses.values())
+    ax4.plot(hs, mses, color="#4fc3f7", lw=2, marker="o", markersize=7)
+    ax4.fill_between(hs, mses, alpha=0.15, color="#4fc3f7")
+    ax4.axhline(0.0, color="#555", lw=0.8, ls="--", label="MSE=0 (parfait)")
     ax4.set_xlabel("Horizon (frames)", color="white", fontsize=9)
-    ax4.set_ylabel("Cosine similarity", color="white", fontsize=9)
-    ax4.set_title("Qualité de prédiction selon l'horizon", color="white", fontsize=10)
+    ax4.set_ylabel("MSE pixel", color="white", fontsize=9)
+    ax4.set_title("Qualité de prédiction pixel selon l'horizon", color="white", fontsize=10)
     ax4.set_xticks(hs); ax4.set_xticklabels([f"t+{h}" for h in hs])
-    ax4.set_ylim(-0.1, 1.1)
     ax4.legend(fontsize=8, labelcolor="white", facecolor="#222", edgecolor="#444")
-    for h, s in zip(hs, sims):
-        ax4.annotate(f"{s:.3f}", (h, s), textcoords="offset points",
+    for h, m in zip(hs, mses):
+        ax4.annotate(f"{m:.4f}", (h, m), textcoords="offset points",
                      xytext=(0, 10), ha="center", color="white", fontsize=8)
 
     # Scorecard
@@ -292,19 +302,19 @@ def save_figure(r2s, r2_global, uniformity, alignment, horizon_sims,
     lines = [
         ("SCORECARD",   "",                                          "white"),
         ("",            "",                                          "white"),
-        ("R² linéaire", f"{r2_global:.3f}  {grade(r2_global)}",     "#a5d6a7"),
+        ("R² lin. θ",   f"{r2s[0]:.3f}",                           "#a5d6a7"),
+        ("R² lin. ω",   f"{r2s[1]:.3f}",                           "#a5d6a7"),
         ("R² MLP",      mlp_str,                                     "#a5d6a7"),
         ("Uniformité",  f"{uniformity:.3f}  {grade_u(uniformity)}", "#4fc3f7"),
-        ("Alignement",  f"{alignment:.3f}",                         "#ff8a65"),
-        ("Pred. t+1",   f"{horizon_sims.get(1, float('nan')):.3f}", "#ce93d8"),
-        ("Pred. t+10",  f"{horizon_sims.get(10,float('nan')):.3f}", "#ce93d8"),
         ("Recon. MSE",  f"{recon_mse:.5f}",                         "#ffcc80"),
+        ("Pred t+1",    f"{horizon_mses.get(1, float('nan')):.5f}", "#ce93d8"),
+        ("Pred t+10",   f"{horizon_mses.get(10,float('nan')):.5f}", "#ce93d8"),
     ]
     for i, (label, val, color) in enumerate(lines):
-        ax5.text(0.05, 0.92 - i * 0.11, label, transform=ax5.transAxes,
+        ax5.text(0.05, 0.93 - i * 0.11, label, transform=ax5.transAxes,
                  color=color, fontsize=10,
                  fontweight="bold" if label == "SCORECARD" else "normal")
-        ax5.text(0.55, 0.92 - i * 0.11, val, transform=ax5.transAxes,
+        ax5.text(0.55, 0.93 - i * 0.11, val, transform=ax5.transAxes,
                  color="white", fontsize=10)
 
     fig.suptitle("Évaluation AutoEncoder baseline", color="white", fontsize=13, y=0.98)
@@ -331,17 +341,16 @@ def main(args):
     _, _, seqs_train = collect_embeddings(model, train_loader, device, normalize=True)
     _, _, seqs_val   = collect_embeddings(model, val_loader,   device, normalize=True)
     uniformity, alignment = uniformity_alignment(seqs_train, seqs_val)
-    horizon_sims = prediction_horizon(model, val_loader, device, horizons=args.horizons)
+    horizon_mses = prediction_horizon(model, val_loader, device, horizons=args.horizons)
     recon_mse    = reconstruction_quality(model, val_loader, device)
 
     print("\n── Résumé ────────────────────────────────────────────────")
     print(f"  R² global (linéaire) : {r2_global:.4f}")
     print(f"  R² global (MLP)      : {r2_mlp:.4f}")
     print(f"  Uniformité           : {uniformity:.4f}")
-    print(f"  Alignement           : {alignment:.4f}")
     print(f"  Reconstruction MSE   : {recon_mse:.6f}")
 
-    save_figure(r2s, r2_global, uniformity, alignment, horizon_sims,
+    save_figure(r2s, r2_global, uniformity, alignment, horizon_mses,
                 recon_mse, preds, s_val, args.save, r2s_mlp=r2s_mlp, r2_mlp=r2_mlp)
 
 
