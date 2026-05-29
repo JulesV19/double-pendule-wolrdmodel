@@ -177,18 +177,19 @@ class RSSM(nn.Module):
         # Reconstruction pixel
         recon_loss = _wmse(self.decoder(z_seq), frames, pixel_weight)
 
-        # KL moyenné sur T et B, puis free-nats sur le scalaire final
-        # (PlaNet/DreamerV2 : max(mean_KL, free_nats), pas de clamp par sample)
-        kl_loss = torch.clamp(
-            torch.stack(kl_list, dim=1).mean(),   # (B, T) → scalaire
-            min=free_nats,
-        )
+        # KL brute (non-clamped) — utile pour diagnostiquer le posterior collapse
+        kl_raw = torch.stack(kl_list, dim=1).mean()   # (B, T) → scalaire
+
+        # Free-nats sur le scalaire final : gradient nul quand KL < free_nats
+        # (PlaNet/DreamerV2 : max(mean_KL, free_nats))
+        kl_loss = torch.clamp(kl_raw, min=free_nats)
 
         loss = recon_loss + kl_scale * kl_loss
         return {
             "loss":       loss,
             "recon_loss": recon_loss.detach(),
             "kl_loss":    kl_loss.detach(),
+            "kl_raw":     kl_raw.detach(),   # KL réelle avant clamp — diagnostic collapse
         }
 
     # ── Inférence ────────────────────────────────────────────────────────────────

@@ -35,17 +35,23 @@ def peak_memory_mb(device) -> float:
 
 
 @torch.no_grad()
-def evaluate(model: RSSM, loader, device, kl_scale, pixel_weight) -> dict:
+def evaluate(model: RSSM, loader, device, kl_scale, pixel_weight, free_nats) -> dict:
     model.eval()
-    total_loss = total_recon = total_kl = 0.0
+    total_loss = total_recon = total_kl = total_kl_raw = 0.0
     for frames, _ in loader:
         m = model(frames.to(device, non_blocking=True),
-                  kl_scale=kl_scale, pixel_weight=pixel_weight)
-        total_loss  += m["loss"].item()
-        total_recon += m["recon_loss"].item()
-        total_kl    += m["kl_loss"].item()
+                  kl_scale=kl_scale, pixel_weight=pixel_weight, free_nats=free_nats)
+        total_loss    += m["loss"].item()
+        total_recon   += m["recon_loss"].item()
+        total_kl      += m["kl_loss"].item()
+        total_kl_raw  += m["kl_raw"].item()
     n = len(loader)
-    return {"loss": total_loss / n, "recon_loss": total_recon / n, "kl_loss": total_kl / n}
+    return {
+        "loss":       total_loss / n,
+        "recon_loss": total_recon / n,
+        "kl_loss":    total_kl / n,
+        "kl_raw":     total_kl_raw / n,
+    }
 
 
 def train(args):
@@ -119,7 +125,7 @@ def train(args):
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=100.0)
             optimizer.step()
             total_loss += m["loss"].item()
-            total_kl   += m["kl_loss"].item()
+            total_kl   += m["kl_raw"].item()
 
         scheduler.step()
         elapsed = time.time() - t0
@@ -129,7 +135,7 @@ def train(args):
         train_loss = total_loss / n
         kl_loss    = total_kl / n
         val_m      = evaluate(model, val_loader, device,
-                              args.kl_scale, args.pixel_weight)
+                              args.kl_scale, args.pixel_weight, args.free_nats)
 
         history["train"].append(train_loss)
         history["val"].append(val_m["loss"])
@@ -148,18 +154,21 @@ def train(args):
             }, ckpt_dir / "rssm_best.pt")
 
         lr_now = optimizer.param_groups[0]["lr"]
+        # kl_loss = KL brute (avant clamp) pour voir si le posterior collapse
+        clamped = kl_loss < args.free_nats
         print(
             f"Epoch {epoch:3d}/{args.epochs}"
             f"  loss={train_loss:.5f}"
-            f"  kl={kl_loss:.3f}"
+            f"  kl={kl_loss:.3f}{'*' if clamped else ''}"
             f"  val={val_m['loss']:.5f}"
             f"  lr={lr_now:.2e}"
             f"  {elapsed:.1f}s"
             + ("  <-- best" if improved else "")
         )
         if epoch == 1 or epoch % 5 == 0:
-            print(f"         recon={val_m['recon_loss']:.5f}"
-                  f"  kl_val={val_m['kl_loss']:.3f}")
+            print(f"         recon_val={val_m['recon_loss']:.5f}"
+                  f"  kl_raw_val={val_m['kl_raw']:.3f}"
+                  f"  {'[collapse]' if val_m['kl_raw'] < args.free_nats else '[actif]'}")
 
     mem_mb = peak_memory_mb(device)
     avg_t  = total_train_time / (args.epochs - start_epoch + 1)
@@ -218,8 +227,8 @@ if __name__ == "__main__":
                         help="taille MLP prior/posterior")
     parser.add_argument("--kl-scale",     type=float, default=1.0,
                         help="poids du terme KL dans la loss")
-    parser.add_argument("--free-nats",    type=float, default=3.0,
-                        help="plancher KL sur le scalaire final (PlaNet default=3.0)")
+    parser.add_argument("--free-nats",    type=float, default=1.0,
+                        help="plancher KL sur le scalaire final (3.0 PlaNet, 1.0 conseillé pendule)")
     parser.add_argument("--pixel-weight", type=float, default=10.0,
                         help="sur-pondération pixels brillants dans wmse")
     parser.add_argument("--epochs",       type=int,   default=100)
