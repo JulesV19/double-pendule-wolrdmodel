@@ -71,6 +71,9 @@ def train(args):
         h_dim=args.h_dim,
         s_dim=args.s_dim,
         hidden_dim=args.hidden_dim,
+        rollout_k=args.rollout_k,
+        rollout_gamma=args.rollout_gamma,
+        rollout_scale=args.rollout_scale,
     ).to(device)
 
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -112,7 +115,7 @@ def train(args):
     for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         t0 = time.time()
-        total_loss = total_kl = 0.0
+        total_loss = total_kl = total_roll = 0.0
 
         # Scheduled sampling : taux linéaire de 0 → ss_max_rate sur ss_ramp_epochs
         ss_rate = min(
@@ -133,6 +136,7 @@ def train(args):
             optimizer.step()
             total_loss += m["loss"].item()
             total_kl   += m["kl_raw"].item()
+            total_roll += m["roll_loss"].item()
 
         scheduler.step()
         elapsed = time.time() - t0
@@ -141,6 +145,7 @@ def train(args):
         n          = len(train_loader)
         train_loss = total_loss / n
         kl_loss    = total_kl / n
+        roll_loss  = total_roll / n
         val_m      = evaluate(model, val_loader, device,
                               args.kl_scale, args.pixel_weight, args.free_nats)
 
@@ -166,7 +171,7 @@ def train(args):
         print(
             f"Epoch {epoch:3d}/{args.epochs}"
             f"  loss={train_loss:.5f}"
-            f"  kl={kl_loss:.3f}{'*' if clamped else ''}"
+            f"  roll={roll_loss:.5f}"
             f"  ss={ss_rate:.2f}"
             f"  val={val_m['loss']:.5f}"
             f"  lr={lr_now:.2e}"
@@ -223,8 +228,8 @@ def _save_plot(history, path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Entraînement RSSM baseline")
     parser.add_argument("--dataset-dir",  default="dataset/pendulum")
-    parser.add_argument("--seq-len",      type=int,   default=50,
-                        help="longueur de séquence (GRU séquentiel, plus court que AE)")
+    parser.add_argument("--seq-len",      type=int,   default=100,
+                        help="longueur de séquence — 100 couvre une période entière du pendule")
     parser.add_argument("--feat-dim",     type=int,   default=128,
                         help="sortie encodeur CNN (= embed_dim AE pour comparaison équitable)")
     parser.add_argument("--h-dim",        type=int,   default=200,
@@ -233,10 +238,16 @@ if __name__ == "__main__":
                         help="état stochastique")
     parser.add_argument("--hidden-dim",   type=int,   default=256,
                         help="taille MLP prior/posterior")
-    parser.add_argument("--ss-max-rate",   type=float, default=0.5,
-                        help="taux max de free-running (scheduled sampling, Bengio 2015)")
-    parser.add_argument("--ss-ramp-epochs", type=int, default=50,
-                        help="nombre d'epochs pour atteindre ss_max_rate (linéaire)")
+    parser.add_argument("--ss-max-rate",    type=float, default=0.5,
+                        help="taux max de free-running (scheduled sampling)")
+    parser.add_argument("--ss-ramp-epochs", type=int,   default=50,
+                        help="epochs pour atteindre ss_max_rate (linéaire)")
+    parser.add_argument("--rollout-k",      type=int,   default=10,
+                        help="steps d'imagination supervisés directement par la rollout loss")
+    parser.add_argument("--rollout-gamma",  type=float, default=0.8,
+                        help="discount exponentiel de la rollout loss par horizon")
+    parser.add_argument("--rollout-scale",  type=float, default=1.0,
+                        help="poids de la rollout loss vs recon loss")
     parser.add_argument("--kl-scale",     type=float, default=0.0,
                         help="poids KL (0 = GRU déterministe pur, recommandé pour pendule)")
     parser.add_argument("--free-nats",    type=float, default=0.0,

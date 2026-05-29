@@ -87,10 +87,13 @@ class RSSM(nn.Module):
 
     def __init__(
         self,
-        feat_dim:   int = 128,
-        h_dim:      int = 200,
-        s_dim:      int = 32,
-        hidden_dim: int = 256,
+        feat_dim:       int   = 128,
+        h_dim:          int   = 200,
+        s_dim:          int   = 32,
+        hidden_dim:     int   = 256,
+        rollout_k:      int   = 10,   # steps d'imagination supervisés directement
+        rollout_gamma:  float = 0.8,  # discount exponentiel de la rollout loss
+        rollout_scale:  float = 1.0,  # poids de la rollout loss vs recon loss
     ):
         super().__init__()
         self.feat_dim   = feat_dim
@@ -101,7 +104,10 @@ class RSSM(nn.Module):
         # la frame courante directement, le GRU n'apprend pas de dynamique, et
         # l'imagination échoue (anneau blanc). Décoder depuis h_t force le GRU
         # à porter toute l'information temporelle.
-        self.latent_dim = h_dim   # = dim décodeur = dim retournée par encode()/imagine()
+        self.latent_dim    = h_dim
+        self.rollout_k     = rollout_k
+        self.rollout_gamma = rollout_gamma
+        self.rollout_scale = rollout_scale
 
         self.encoder   = ContextEncoder(feat_dim, in_channels=6)
         self.fc_embed  = nn.Sequential(nn.Linear(s_dim, h_dim), nn.ELU())
@@ -124,6 +130,15 @@ class RSSM(nn.Module):
         diff = torch.zeros_like(frames)
         diff[:, 1:] = frames[:, 1:] - frames[:, :-1]
         return torch.cat([frames, diff], dim=2)
+
+    def _rollout_h(self, h_start: torch.Tensor, k: int) -> torch.Tensor:
+        """Déroule fc_trans k fois depuis h_start (B, T, h_dim) → (B, T, h_dim).
+        Utilisé pour la rollout loss : supervise directement l'imagination à k pas."""
+        B, T, D = h_start.shape
+        h = h_start.reshape(B * T, D)
+        for _ in range(k):
+            h = self.gru_cell(self.fc_trans(h), h)
+        return h.reshape(B, T, D)
 
     def _init_state(self, B: int, device):
         h = torch.zeros(B, self.h_dim, device=device)
@@ -193,23 +208,42 @@ class RSSM(nn.Module):
 
         h_seq = torch.stack(h_list, dim=1)   # (B, T, h_dim)
 
-        # Reconstruction depuis h_t uniquement — force le GRU à apprendre les dynamiques.
-        # s_t reste dans la loss via KL mais n'a pas accès au décodeur.
+        # Reconstruction one-step depuis h_t
         recon_loss = _wmse(self.decoder(h_seq), frames, pixel_weight)
 
-        # KL brute (non-clamped) — utile pour diagnostiquer le posterior collapse
-        kl_raw = torch.stack(kl_list, dim=1).mean()   # (B, T) → scalaire
+        # ── Rollout loss ────────────────────────────────────────────────────────
+        # Supervise directement l'imagination à k=1..rollout_k steps.
+        # Depuis chaque h_t (teacher-forced, detaché pour la mémoire), on déroule
+        # k steps via fc_trans et on compare avec la vraie frame future.
+        # Cela force fc_trans à apprendre des dynamiques stables sur le long terme,
+        # évitant la convergence vers la moyenne après ~T/2 steps.
+        roll_loss  = torch.zeros(1, device=frames.device)
+        weight_sum = 0.0
+        w = self.rollout_gamma
+        for k in range(1, self.rollout_k + 1):
+            T_k = T - k
+            if T_k <= 0:
+                break
+            h_start   = h_seq[:, :T_k].detach()          # (B, T_k, h_dim)
+            h_rolled  = self._rollout_h(h_start, k)       # (B, T_k, h_dim)
+            frame_tgt = frames[:, k:k + T_k]              # (B, T_k, 3, H, W)
+            roll_loss  = roll_loss + w * _wmse(self.decoder(h_rolled), frame_tgt, pixel_weight)
+            weight_sum += w
+            w *= self.rollout_gamma
+        if weight_sum > 0:
+            roll_loss = roll_loss / weight_sum
 
-        # Free-nats sur le scalaire final : gradient nul quand KL < free_nats
-        # (PlaNet/DreamerV2 : max(mean_KL, free_nats))
+        # KL
+        kl_raw  = torch.stack(kl_list, dim=1).mean()
         kl_loss = torch.clamp(kl_raw, min=free_nats)
 
-        loss = recon_loss + kl_scale * kl_loss
+        loss = recon_loss + self.rollout_scale * roll_loss + kl_scale * kl_loss
         return {
-            "loss":       loss,
-            "recon_loss": recon_loss.detach(),
-            "kl_loss":    kl_loss.detach(),
-            "kl_raw":     kl_raw.detach(),   # KL réelle avant clamp — diagnostic collapse
+            "loss":        loss,
+            "recon_loss":  recon_loss.detach(),
+            "roll_loss":   roll_loss.detach(),
+            "kl_loss":     kl_loss.detach(),
+            "kl_raw":      kl_raw.detach(),
         }
 
     # ── Inférence ────────────────────────────────────────────────────────────────

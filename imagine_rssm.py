@@ -38,7 +38,7 @@ DARK2   = "#1a1a1a"
 C_REAL  = "#4fc3f7"
 C_DREAM = "#a5d6a7"   # vert pour distinguer du rouge AE
 
-N_SEED = 4   # frames d'amorçage (plus que l'AE : le GRU a besoin de quelques pas)
+N_SEED = 10  # frames d'amorçage — plus de contexte = h_T_seed plus informatif
 
 
 # ── Chargement ─────────────────────────────────────────────────────────────────
