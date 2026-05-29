@@ -218,8 +218,8 @@ if __name__ == "__main__":
                         help="taille MLP prior/posterior")
     parser.add_argument("--kl-scale",     type=float, default=1.0,
                         help="poids du terme KL dans la loss")
-    parser.add_argument("--free-nats",    type=float, default=1.0,
-                        help="plancher KL par pas de temps (free nats)")
+    parser.add_argument("--free-nats",    type=float, default=3.0,
+                        help="plancher KL sur le scalaire final (PlaNet default=3.0)")
     parser.add_argument("--pixel-weight", type=float, default=10.0,
                         help="sur-pondération pixels brillants dans wmse")
     parser.add_argument("--epochs",       type=int,   default=100)

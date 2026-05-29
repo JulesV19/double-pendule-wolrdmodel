@@ -53,8 +53,8 @@ class _Prior(nn.Module):
         )
 
     def forward(self, h: torch.Tensor):
-        mu, log_std = self.net(h).chunk(2, dim=-1)
-        return mu, F.softplus(log_std) + 0.1   # σ ≥ 0.1 pour stabilité
+        mu, std_param = self.net(h).chunk(2, dim=-1)
+        return mu, F.softplus(std_param) + 0.1   # σ ≥ 0.1 pour stabilité
 
 
 class _Posterior(nn.Module):
@@ -68,8 +68,8 @@ class _Posterior(nn.Module):
         )
 
     def forward(self, h: torch.Tensor, feat: torch.Tensor):
-        mu, log_std = self.net(torch.cat([h, feat], dim=-1)).chunk(2, dim=-1)
-        return mu, F.softplus(log_std) + 0.1
+        mu, std_param = self.net(torch.cat([h, feat], dim=-1)).chunk(2, dim=-1)
+        return mu, F.softplus(std_param) + 0.1
 
 
 # ── Modèle principal ─────────────────────────────────────────────────────────────
@@ -99,7 +99,12 @@ class RSSM(nn.Module):
         self.latent_dim = h_dim + s_dim   # dimension du vecteur envoyé au décodeur
 
         self.encoder   = ContextEncoder(feat_dim, in_channels=6)
-        self.gru_cell  = nn.GRUCell(s_dim, h_dim)
+        # Projection du state stochastique avant le GRU (PlaNet/DreamerV2 :
+        # fc_state_action). Sans action : Linear(s_dim → h_dim) + ELU.
+        # Permet au GRU de recevoir une représentation de bonne dimension
+        # et améliore le gradient flow depuis s vers h.
+        self.fc_embed  = nn.Sequential(nn.Linear(s_dim, h_dim), nn.ELU())
+        self.gru_cell  = nn.GRUCell(h_dim, h_dim)   # input_size=h_dim après projection
         self.prior     = _Prior(h_dim, s_dim, hidden_dim)
         self.posterior = _Posterior(h_dim, feat_dim, s_dim, hidden_dim)
         # Réutilise AEDecoder avec embed_dim = h_dim + s_dim
@@ -151,10 +156,10 @@ class RSSM(nn.Module):
         h_list, s_list, kl_list = [], [], []
 
         for t in range(T):
-            # Pas déterministe : GRU met à jour h depuis le s précédent
-            h = self.gru_cell(s, h)
+            # Embedding du state stochastique → même dim que h avant le GRU
+            x = self.fc_embed(s)           # (B, h_dim)
+            h = self.gru_cell(x, h)        # h_t = GRU(fc_embed(s_{t-1}), h_{t-1})
 
-            # Prior et posterior
             mu_p, std_p = self.prior(h)
             mu_q, std_q = self.posterior(h, feats[:, t])
 
@@ -163,10 +168,7 @@ class RSSM(nn.Module):
 
             h_list.append(h)
             s_list.append(s)
-
-            # KL analytique avec free-nats (plancher par échantillon)
-            kl = _kl_gaussian(mu_q, std_q, mu_p, std_p)   # (B,)
-            kl_list.append(torch.clamp(kl, min=free_nats))
+            kl_list.append(_kl_gaussian(mu_q, std_q, mu_p, std_p))   # (B,)
 
         h_seq = torch.stack(h_list, dim=1)            # (B, T, h_dim)
         s_seq = torch.stack(s_list, dim=1)            # (B, T, s_dim)
@@ -175,8 +177,12 @@ class RSSM(nn.Module):
         # Reconstruction pixel
         recon_loss = _wmse(self.decoder(z_seq), frames, pixel_weight)
 
-        # KL moyenné sur T puis sur B
-        kl_loss = torch.stack(kl_list, dim=1).mean()  # (B, T) → scalaire
+        # KL moyenné sur T et B, puis free-nats sur le scalaire final
+        # (PlaNet/DreamerV2 : max(mean_KL, free_nats), pas de clamp par sample)
+        kl_loss = torch.clamp(
+            torch.stack(kl_list, dim=1).mean(),   # (B, T) → scalaire
+            min=free_nats,
+        )
 
         loss = recon_loss + kl_scale * kl_loss
         return {
@@ -205,7 +211,7 @@ class RSSM(nn.Module):
         z_list = []
 
         for t in range(T):
-            h = self.gru_cell(s, h)
+            h = self.gru_cell(self.fc_embed(s), h)
             mu_q, _ = self.posterior(h, feats[:, t])
             s = mu_q   # moyenne (pas d'échantillonnage pour l'encodage)
             z_list.append(torch.cat([h, s], dim=-1))
@@ -244,14 +250,14 @@ class RSSM(nn.Module):
         z_list = []
 
         for t in range(T_seed):
-            h = self.gru_cell(s, h)
+            h = self.gru_cell(self.fc_embed(s), h)
             mu_q, _ = self.posterior(h, feats[:, t])
             s = mu_q
             z_list.append(torch.cat([h, s], dim=-1))
 
         # Phase d'imagination — prior uniquement, sans encodeur
         for _ in range(n_steps):
-            h = self.gru_cell(s, h)
+            h = self.gru_cell(self.fc_embed(s), h)
             mu_p, std_p = self.prior(h)
             s = mu_p + std_p * torch.randn_like(mu_p) if stochastic else mu_p
             z_list.append(torch.cat([h, s], dim=-1))
