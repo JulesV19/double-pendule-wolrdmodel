@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as grad_ckpt
 
 from .encoder import ContextEncoder
 
@@ -151,8 +152,18 @@ class AutoEncoder(nn.Module):
             T_k    = T - k
             z_roll = z[:, :T_k]
             for _ in range(k):
-                z_roll = self.predictor(z_roll)    # (B, T_k, D)  déjà L2-normé
-            frame_pred = self.decoder(z_roll)      # (B, T_k, 3, H, W)
+                # Gradient checkpointing : stocke seulement l'entrée de chaque
+                # appel, recompute les activations internes pendant le backward.
+                # Réduit la mémoire de O(rollout_k²) à O(rollout_k) sans
+                # couper le gradient (contrairement à grad_cutoff).
+                if self.training:
+                    z_roll = grad_ckpt(self.predictor, z_roll, use_reentrant=False)
+                else:
+                    z_roll = self.predictor(z_roll)
+            if self.training:
+                frame_pred = grad_ckpt(self.decoder, z_roll, use_reentrant=False)
+            else:
+                frame_pred = self.decoder(z_roll)
             frame_tgt  = frames[:, k:k + T_k]     # (B, T_k, 3, H, W)
             recon_loss = recon_loss + w * self._wmse(frame_pred, frame_tgt, pixel_weight)
             weight_sum += w
