@@ -114,13 +114,20 @@ def train(args):
         t0 = time.time()
         total_loss = total_kl = 0.0
 
+        # Scheduled sampling : taux linéaire de 0 → ss_max_rate sur ss_ramp_epochs
+        ss_rate = min(
+            args.ss_max_rate,
+            args.ss_max_rate * (epoch - 1) / max(1, args.ss_ramp_epochs - 1),
+        )
+
         for frames, _ in train_loader:
             frames = frames.to(device, non_blocking=True)
             optimizer.zero_grad()
             m = model(frames,
                       kl_scale=args.kl_scale,
                       pixel_weight=args.pixel_weight,
-                      free_nats=args.free_nats)
+                      free_nats=args.free_nats,
+                      ss_rate=ss_rate)
             m["loss"].backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=100.0)
             optimizer.step()
@@ -160,6 +167,7 @@ def train(args):
             f"Epoch {epoch:3d}/{args.epochs}"
             f"  loss={train_loss:.5f}"
             f"  kl={kl_loss:.3f}{'*' if clamped else ''}"
+            f"  ss={ss_rate:.2f}"
             f"  val={val_m['loss']:.5f}"
             f"  lr={lr_now:.2e}"
             f"  {elapsed:.1f}s"
@@ -225,6 +233,10 @@ if __name__ == "__main__":
                         help="état stochastique")
     parser.add_argument("--hidden-dim",   type=int,   default=256,
                         help="taille MLP prior/posterior")
+    parser.add_argument("--ss-max-rate",   type=float, default=0.5,
+                        help="taux max de free-running (scheduled sampling, Bengio 2015)")
+    parser.add_argument("--ss-ramp-epochs", type=int, default=50,
+                        help="nombre d'epochs pour atteindre ss_max_rate (linéaire)")
     parser.add_argument("--kl-scale",     type=float, default=0.0,
                         help="poids KL (0 = GRU déterministe pur, recommandé pour pendule)")
     parser.add_argument("--free-nats",    type=float, default=0.0,

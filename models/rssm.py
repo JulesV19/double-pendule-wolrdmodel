@@ -104,12 +104,14 @@ class RSSM(nn.Module):
         self.latent_dim = h_dim   # = dim décodeur = dim retournée par encode()/imagine()
 
         self.encoder   = ContextEncoder(feat_dim, in_channels=6)
-        # Projection du state stochastique avant le GRU (PlaNet/DreamerV2 :
-        # fc_state_action). Sans action : Linear(s_dim → h_dim) + ELU.
-        # Permet au GRU de recevoir une représentation de bonne dimension
-        # et améliore le gradient flow depuis s vers h.
         self.fc_embed  = nn.Sequential(nn.Linear(s_dim, h_dim), nn.ELU())
-        self.gru_cell  = nn.GRUCell(h_dim, h_dim)   # input_size=h_dim après projection
+        # fc_trans : transition autonome h_t → input GRU, utilisée pendant
+        # l'imagination ET pendant les steps "free-running" du scheduled sampling.
+        # Entraîner fc_trans pendant le training réduit le biais d'exposition :
+        # le GRU apprend à avancer ses dynamiques depuis son propre état.
+        # (Bengio et al. 2015, "Scheduled Sampling for Sequence Prediction")
+        self.fc_trans  = nn.Sequential(nn.Linear(h_dim, h_dim), nn.ELU())
+        self.gru_cell  = nn.GRUCell(h_dim, h_dim)
         self.prior     = _Prior(h_dim, s_dim, hidden_dim)
         self.posterior = _Posterior(h_dim, feat_dim, s_dim, hidden_dim)
         self.decoder   = AEDecoder(h_dim)   # entrée = h_t uniquement
@@ -136,16 +138,19 @@ class RSSM(nn.Module):
         kl_scale:     float = 1.0,
         pixel_weight: float = 10.0,
         free_nats:    float = 1.0,
+        ss_rate:      float = 0.0,
     ) -> dict:
         """
         Args:
             frames       : (B, T, 3, H, W)  normalisées [0, 1]
-            kl_scale     : poids du terme KL dans la loss totale
+            kl_scale     : poids du terme KL
             pixel_weight : sur-pondération pixels brillants dans wmse
-            free_nats    : plancher KL par pas de temps (évite sur-pénalisation initiale)
+            free_nats    : plancher KL sur le scalaire final
+            ss_rate      : probabilité de free-running à ce step d'entraînement
+                           (scheduled sampling, augmente de 0 → ss_max_rate au fil des epochs)
 
         Returns:
-            dict : loss, recon_loss, kl_loss  (scalaires)
+            dict : loss, recon_loss, kl_loss, kl_raw  (scalaires)
         """
         B, T, C, H, W = frames.shape
         device = frames.device
@@ -160,14 +165,26 @@ class RSSM(nn.Module):
         h_list, s_list, kl_list = [], [], []
 
         for t in range(T):
-            # Embedding du state stochastique → même dim que h avant le GRU
-            x = self.fc_embed(s)           # (B, h_dim)
-            h = self.gru_cell(x, h)        # h_t = GRU(fc_embed(s_{t-1}), h_{t-1})
+            # Scheduled sampling : avec probabilité ss_rate, utiliser fc_trans(h)
+            # (transition autonome, identique à l'imagination) au lieu du posterior.
+            # Augmenter ss_rate au fil des epochs réduit le biais d'exposition.
+            use_free_run = (
+                self.training
+                and ss_rate > 0.0
+                and torch.rand(1, device=frames.device).item() < ss_rate
+            )
+
+            if use_free_run:
+                x = self.fc_trans(h)                          # self-transition
+                # posterior calculé quand même pour la KL (monitoring)
+                mu_q, std_q = self.posterior(h, feats[:, t])
+            else:
+                mu_q, std_q = self.posterior(h, feats[:, t]) # teacher forcing
+                x = self.fc_embed(mu_q)
+
+            h = self.gru_cell(x, h)
 
             mu_p, std_p = self.prior(h)
-            mu_q, std_q = self.posterior(h, feats[:, t])
-
-            # Reparameterization trick — s vient du posterior pendant l'entraînement
             s = mu_q + std_q * torch.randn_like(mu_q)
 
             h_list.append(h)
@@ -253,17 +270,18 @@ class RSSM(nn.Module):
         h, s = self._init_state(B, device)
         z_list = []
 
+        # Phase de graine : teacher forcing (posterior sur les frames réelles)
+        s = torch.zeros(B, self.s_dim, device=device)
         for t in range(T_seed):
-            h = self.gru_cell(self.fc_embed(s), h)
             mu_q, _ = self.posterior(h, feats[:, t])
+            h = self.gru_cell(self.fc_embed(mu_q), h)
             s = mu_q
-            z_list.append(h)   # h uniquement — cohérent avec le décodeur
+            z_list.append(h)
 
-        # Phase d'imagination — prior uniquement, sans encodeur
+        # Phase d'imagination : fc_trans (même chemin que le free-running du training)
+        # Plus de prior needed — fc_trans est entraîné explicitement pour cette tâche.
         for _ in range(n_steps):
-            h = self.gru_cell(self.fc_embed(s), h)
-            mu_p, std_p = self.prior(h)
-            s = mu_p + std_p * torch.randn_like(mu_p) if stochastic else mu_p
+            h = self.gru_cell(self.fc_trans(h), h)
             z_list.append(h)
 
         return torch.stack(z_list, dim=1)   # (B, T_seed + n_steps, h_dim)
