@@ -171,11 +171,16 @@ class RSSM(nn.Module):
         B, T, C, H, W = frames.shape
         device = frames.device
 
-        # Encodage de toutes les frames en un seul appel CNN (parallèle sur B*T)
-        pairs = self._make_pairs(frames)   # (B, T, 6, H, W)
-        feats = self.encoder(
-            pairs.reshape(B * T, 6, H, W)
-        ).view(B, T, self.feat_dim)        # (B, T, feat_dim)
+        # Encodage de toutes les frames en parallèle (B*T frames en un appel CNN).
+        # Grad checkpointing : évite de stocker les activations CNN intermédiaires
+        # (~750MB pour B=32, T=100). Seule la sortie (B*T, feat_dim) est gardée.
+        pairs      = self._make_pairs(frames)   # (B, T, 6, H, W)
+        pairs_flat = pairs.reshape(B * T, 6, H, W)
+        if self.training:
+            feats = grad_ckpt(self.encoder, pairs_flat, use_reentrant=False)
+        else:
+            feats = self.encoder(pairs_flat)
+        feats = feats.view(B, T, self.feat_dim)   # (B, T, feat_dim)
 
         h, s = self._init_state(B, device)
         h_list, s_list, kl_list = [], [], []
@@ -209,8 +214,14 @@ class RSSM(nn.Module):
 
         h_seq = torch.stack(h_list, dim=1)   # (B, T, h_dim)
 
-        # Reconstruction one-step depuis h_t
-        recon_loss = _wmse(self.decoder(h_seq), frames, pixel_weight)
+        # Reconstruction one-step. Grad checkpointing : évite ~700MB d'activations
+        # deconv pour B=32, T=100 (deconv3 seul = B*T*32*32*32*4 bytes).
+        if self.training:
+            recon_loss = _wmse(
+                grad_ckpt(self.decoder, h_seq, use_reentrant=False), frames, pixel_weight
+            )
+        else:
+            recon_loss = _wmse(self.decoder(h_seq), frames, pixel_weight)
 
         # ── Rollout loss ────────────────────────────────────────────────────────
         # Supervise directement l'imagination à k=1..rollout_k steps.

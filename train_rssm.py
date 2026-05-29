@@ -228,8 +228,8 @@ def _save_plot(history, path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Entraînement RSSM baseline")
     parser.add_argument("--dataset-dir",  default="dataset/pendulum")
-    parser.add_argument("--seq-len",      type=int,   default=100,
-                        help="longueur de séquence — 100 couvre une période entière du pendule")
+    parser.add_argument("--seq-len",      type=int,   default=50,
+                        help="longueur séquence (rollout_k étend la supervision au-delà)")
     parser.add_argument("--feat-dim",     type=int,   default=128,
                         help="sortie encodeur CNN (= embed_dim AE pour comparaison équitable)")
     parser.add_argument("--h-dim",        type=int,   default=200,
